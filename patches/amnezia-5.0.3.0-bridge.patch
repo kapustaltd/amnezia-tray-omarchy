@@ -1,0 +1,186 @@
+diff --git i/client/CMakeLists.txt w/client/CMakeLists.txt
+index 2179aba..c89a870 100644
+--- i/client/CMakeLists.txt
++++ w/client/CMakeLists.txt
+@@ -56,6 +56,16 @@ endif()
+ 
+ qt_standard_project_setup()
+ qt_add_executable(${PROJECT} MANUAL_FINALIZATION)
++option(AMNEZIA_OMARCHY_BRIDGE "Build the opt-in Omarchy session-bus API" OFF)
++if(AMNEZIA_OMARCHY_BRIDGE)
++    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID)
++        message(FATAL_ERROR "The Omarchy bridge is only supported on desktop Linux")
++    endif()
++    find_package(Qt6 REQUIRED COMPONENTS DBus)
++    target_sources(${PROJECT} PRIVATE omarchy/traybridge.cpp omarchy/traybridge.h)
++    target_link_libraries(${PROJECT} PRIVATE Qt6::DBus)
++    target_compile_definitions(${PROJECT} PRIVATE AMNEZIA_OMARCHY_BRIDGE)
++endif()
+ target_include_directories(${PROJECT} PUBLIC
+     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+ )
+diff --git i/client/amneziaApplication.cpp w/client/amneziaApplication.cpp
+index 3800840..fd89182 100644
+--- i/client/amneziaApplication.cpp
++++ w/client/amneziaApplication.cpp
+@@ -1,4 +1,7 @@
+ #include "amneziaApplication.h"
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++#include "omarchy/traybridge.h"
++#endif
+ 
+ #include <QClipboard>
+ #include <QFontDatabase>
+@@ -179,6 +182,43 @@ void AmneziaApplication::init()
+ 
+     m_coreController->setQmlRoot();
+ 
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++    if (qEnvironmentVariable("AMNEZIA_TRAY_BRIDGE") != "0") {
++        auto navigate = [this](const QString &name) {
++            auto *page = m_coreController->pageController();
++            const QHash<QString, PageLoader::PageEnum> pages {
++                {"home", PageLoader::PageEnum::PageHome},
++                {"settings", PageLoader::PageEnum::PageSettings},
++                {"dns", PageLoader::PageEnum::PageSettingsDns},
++                {"killSwitch", PageLoader::PageEnum::PageSettingsKillSwitch},
++                {"split", PageLoader::PageEnum::PageSettingsSplitTunneling},
++                {"appSplit", PageLoader::PageEnum::PageSettingsAppSplitTunneling},
++                {"share", PageLoader::PageEnum::PageShare},
++                {"selfhost", PageLoader::PageEnum::PageSetupWizardCredentials},
++                {"importPreview", PageLoader::PageEnum::PageSetupWizardViewConfig},
++                {"protocols", PageLoader::PageEnum::PageSettingsServerProtocols}
++            };
++            if (!pages.contains(name)) return false;
++            if (name == "protocols") {
++                auto *servers = m_engine->rootContext()->contextProperty("ServersUiController").value<QObject *>();
++                const QString id = servers->property("defaultServerId").toString();
++                if (id.isEmpty()) return false;
++                QMetaObject::invokeMethod(servers, "setProcessedServerId", Q_ARG(QString, id));
++            }
++            emit page->raiseMainWindow();
++            if (name == "home") emit page->goToPageHome();
++            else if (name == "settings") emit page->goToPageSettings();
++            else emit page->goToPage(pages.value(name));
++            return true;
++        };
++        auto *bridge = new TrayBridge(m_engine->rootContext(), navigate, this);
++        connect(m_vpnConnection.get(), &VpnConnection::bytesChanged, bridge, &TrayBridge::addTraffic);
++        auto *controller = m_engine->rootContext()->contextProperty("ConnectionController").value<QObject *>();
++        connect(controller, SIGNAL(omarchyUserDisconnected()), bridge, SLOT(cancelResume()));
++        if (!bridge->start()) qWarning() << "Could not start the Omarchy session-bus API";
++    }
++#endif
++
+ #if CLIENT_ENABLE_APP_UPDATES
+     m_coreController->checkForAppUpdates();
+ #endif
+diff --git i/client/ui/controllers/connectionUiController.cpp w/client/ui/controllers/connectionUiController.cpp
+index 37a355c..ccf0965 100644
+--- i/client/ui/controllers/connectionUiController.cpp
++++ w/client/ui/controllers/connectionUiController.cpp
+@@ -43,6 +43,9 @@ void ConnectionUiController::openConnection()
+ 
+ void ConnectionUiController::closeConnection()
+ {
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++    emit omarchyUserDisconnected();
++#endif
+     m_connectionController->closeConnection();
+ }
+ 
+diff --git i/client/ui/controllers/connectionUiController.h w/client/ui/controllers/connectionUiController.h
+index 08c5169..3f9a781 100644
+--- i/client/ui/controllers/connectionUiController.h
++++ w/client/ui/controllers/connectionUiController.h
+@@ -2,6 +2,9 @@
+ #define CONNECTIONUICONTROLLER_H
+ 
+ #include <QObject>
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++#include <QMetaEnum>
++#endif
+ 
+ #include "core/controllers/connectionController.h"
+ #include "core/utils/errorCodes.h"
+@@ -15,6 +18,12 @@ class ConnectionUiController : public QObject
+     Q_OBJECT
+ 
+ public:
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++    Q_PROPERTY(QString omarchyConnectionState READ omarchyConnectionState NOTIFY connectionStateChanged)
++    QString omarchyConnectionState() const {
++        return QString::fromLatin1(QMetaEnum::fromType<Vpn::ConnectionState>().valueToKey(m_state));
++    }
++#endif
+     Q_PROPERTY(bool isConnected READ isConnected NOTIFY connectionStateChanged)
+     Q_PROPERTY(bool isConnectionInProgress READ isConnectionInProgress NOTIFY connectionStateChanged)
+     Q_PROPERTY(QString connectionStateText READ connectionStateText NOTIFY connectionStateChanged)
+@@ -44,6 +53,9 @@ public slots:
+ 
+ signals:
+     void connectionStateChanged();
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++    void omarchyUserDisconnected();
++#endif
+ 
+     void connectionErrorOccurred(ErrorCode errorCode);
+ 
+diff --git i/client/ui/controllers/importUiController.cpp w/client/ui/controllers/importUiController.cpp
+index db81c60..3203f1c 100644
+--- i/client/ui/controllers/importUiController.cpp
++++ w/client/ui/controllers/importUiController.cpp
+@@ -98,6 +98,23 @@ bool ImportUiController::extractConfigFromQr(const QByteArray &data)
+     return true;
+ }
+ 
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++bool ImportUiController::extractOmarchyQr(const QByteArray &data)
++{
++    // Reuse the original QR framing/parser, including single-frame series exports.
++    m_importController->startDecodingQr();
++    const auto parsed = m_importController->parseQrCodeChunk(QString::fromUtf8(data));
++    auto result = parsed.success ? parsed.importResult : m_importController->extractConfigFromQr(data);
++    if (result.errorCode != ErrorCode::NoError) return false;
++    m_config = result.config;
++    m_configFileName = result.configFileName;
++    m_maliciousWarningText = result.maliciousWarningText;
++    m_isNativeWireGuardConfig = result.isNativeWireGuardConfig;
++    emit importConfigChanged();
++    return true;
++}
++#endif
++
+ QString ImportUiController::getConfig()
+ {
+     return QJsonDocument(m_config).toJson(QJsonDocument::Indented);
+diff --git i/client/ui/controllers/importUiController.h w/client/ui/controllers/importUiController.h
+index c527e93..477f1fa 100644
+--- i/client/ui/controllers/importUiController.h
++++ w/client/ui/controllers/importUiController.h
+@@ -23,6 +23,9 @@ public slots:
+     bool extractConfigFromFile(const QString &fileName);
+     bool extractConfigFromData(QString data);
+     bool extractConfigFromQr(const QByteArray &data);
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++    bool extractOmarchyQr(const QByteArray &data);
++#endif
+     QString getConfig();
+     QString getConfigFileName();
+     QString getMaliciousWarningText();
+diff --git i/client/ui/utils/systemTrayNotificationHandler.cpp w/client/ui/utils/systemTrayNotificationHandler.cpp
+index 9158cb6..843eba5 100644
+--- i/client/ui/utils/systemTrayNotificationHandler.cpp
++++ w/client/ui/utils/systemTrayNotificationHandler.cpp
+@@ -49,7 +49,10 @@ SystemTrayNotificationHandler::SystemTrayNotificationHandler(QObject* parent) :
+     m_statusIcon = new MacOSStatusIcon(this);
+     m_statusIcon->setMenu(&m_menu);
+ #else
+-    m_systemTrayIcon.show();
++#ifdef AMNEZIA_OMARCHY_BRIDGE
++    if (qEnvironmentVariable("AMNEZIA_TRAY_BRIDGE") == "0")
++#endif
++        m_systemTrayIcon.show();
+     connect(&m_systemTrayIcon, &QSystemTrayIcon::activated, this,
+             &SystemTrayNotificationHandler::onTrayActivated);
+     m_systemTrayIcon.setContextMenu(&m_menu);

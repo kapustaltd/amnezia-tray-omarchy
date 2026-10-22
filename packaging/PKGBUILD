@@ -1,0 +1,36 @@
+# Maintainer: kapustaltd
+pkgname=amnezia-tray-omarchy-git
+pkgver=0.1.0.r0
+pkgrel=1
+pkgdesc='AmneziaVPN tray wrapper for Omarchy (requires bridge-enabled client)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/kapustaltd/amnezia-tray-omarchy'
+license=('GPL-3.0-only')
+depends=('qt6-base' 'qt6-svg')
+makedepends=('git')
+optdepends=('zbar: import QR images' 'amnezia-vpn: VPN engine; must be rebuilt with the included bridge patch')
+provides=('amnezia-tray-omarchy')
+conflicts=('amnezia-tray-omarchy')
+source=('amnezia-tray-omarchy::git+https://github.com/kapustaltd/amnezia-tray-omarchy.git#branch=main')
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/amnezia-tray-omarchy"
+    printf '0.1.0.r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    mkdir -p "$srcdir/build-tray"
+    cd "$srcdir/build-tray"
+    qmake6 "$srcdir/amnezia-tray-omarchy/tray.pro"
+    make
+}
+
+package() {
+    cd "$srcdir/build-tray"
+    make INSTALL_ROOT="$pkgdir" install
+    install -Dm644 "$srcdir/amnezia-tray-omarchy/packaging/amnezia-tray-omarchy.service" \
+        "$pkgdir/usr/lib/systemd/user/amnezia-tray-omarchy.service"
+    install -Dm644 "$srcdir/amnezia-tray-omarchy/SPEC.md" \
+        "$pkgdir/usr/share/doc/amnezia-tray-omarchy/SPEC.md"
+}

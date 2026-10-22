@@ -1,0 +1,13 @@
+QT += core gui widgets dbus
+CONFIG += c++17
+TEMPLATE = app
+TARGET = amnezia-tray-omarchy
+SOURCES += src/main.cpp src/tray.cpp
+HEADERS += src/tray.h
+RESOURCES += assets/assets.qrc
+target.path = /usr/bin
+desktop.files = packaging/amnezia-tray-omarchy.desktop
+desktop.path = /usr/share/applications
+icon.files = assets/amnezia-tray-omarchy.svg
+icon.path = /usr/share/icons/hicolor/scalable/apps
+INSTALLS += target desktop icon

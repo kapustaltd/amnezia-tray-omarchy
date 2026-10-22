@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Amnezia Tray
+Comment=Control AmneziaVPN from the Omarchy tray
+Exec=amnezia-tray-omarchy %u
+Icon=amnezia-tray-omarchy
+Terminal=false
+Categories=Network;
+MimeType=x-scheme-handler/vpn;
+StartupNotify=false

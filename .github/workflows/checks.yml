@@ -1,0 +1,29 @@
+name: Build and check
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  tray-and-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-declarative-dev qt6-svg-dev dbus-x11 desktop-file-utils
+      - name: Build tray and test bridge over D-Bus
+        run: bash scripts/build.sh
+      - name: Validate desktop entry and scripts
+        run: |
+          desktop-file-validate packaging/amnezia-tray-omarchy.desktop
+          bash -n scripts/build.sh packaging/PKGBUILD
+          python3 -m py_compile scripts/prepare-client.py scripts/smoke-native.py
+      - name: Check patch against the pinned original client
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/amnezia-vpn/amnezia-client.git /tmp/amnezia-native
+          git -C /tmp/amnezia-native checkout de93650a90739b87bb47a632872ea9d0adc9412f
+          python3 scripts/prepare-client.py /tmp/amnezia-native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amnezia-tray-linux
+          path: build/tray/amnezia-tray-omarchy

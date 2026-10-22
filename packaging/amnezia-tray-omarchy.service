@@ -1,0 +1,12 @@
+[Unit]
+Description=AmneziaVPN tray wrapper
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/amnezia-tray-omarchy --start-client
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
