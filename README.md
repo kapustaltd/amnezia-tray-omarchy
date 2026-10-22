@@ -2,7 +2,8 @@
 
 An AmneziaVPN tray integration for Omarchy and Arch Linux.
 
-**Status:** requirements recorded; architecture clarification pending. No client
+**Status:** requirements recorded; wrapper architecture selected. Integration with
+the original client's limited external interface is being specified. No client
 implementation is published yet.
 
 See [SPEC.md](SPEC.md) for the owner's decisions, expected behavior, and acceptance
